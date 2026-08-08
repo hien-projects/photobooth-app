@@ -121,7 +121,7 @@
     box-shadow: 0 24px 50px -20px rgba(91,74,63,.3);
   }
   .strip-actions{
-    display:flex; justify-content:center; gap:10px; margin-top:16px;
+    display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:16px;
   }
   .btn{
     font-family:'Space Mono', monospace; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
@@ -253,8 +253,8 @@
     <div class="strip-empty" id="stripEmpty">Nothing developed yet &mdash; press the button to print your strip.</div>
     <canvas id="stripCanvas" style="display:none;"></canvas>
     <div class="strip-actions" id="stripActions" style="display:none;">
-      <button class="btn btn-primary" id="downloadBtn">Tear Off Strip</button>
-      <button class="btn btn-secondary" id="newStripBtn">Start Over</button>
+      <button class="btn btn-primary" id="printBtn">Print Picture</button>
+      <button class="btn btn-secondary" id="newStripBtn">Retake Picture</button>
     </div>
   </div>
 </div>
@@ -270,7 +270,7 @@ const frameDotsContainer = document.getElementById('frameDots');
 const stripEmpty = document.getElementById('stripEmpty');
 const stripCanvas = document.getElementById('stripCanvas');
 const stripActions = document.getElementById('stripActions');
-const downloadBtn = document.getElementById('downloadBtn');
+const printBtn = document.getElementById('printBtn');
 const newStripBtn = document.getElementById('newStripBtn');
 const hiddenCanvas = document.getElementById('hiddenCanvas');
 let activeFrame = null;
@@ -416,6 +416,33 @@ async function runSession(){
   await buildStrip();
   boothScreen.classList.add('hide');
   resultsScreen.classList.remove('hide');
+  scheduleIdleReset();
+}
+
+let idleTimer = null;
+
+function scheduleIdleReset(){
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(resetToLanding, 30000);
+}
+
+function clearIdleReset(){
+  clearTimeout(idleTimer);
+}
+
+function resetToLanding(){
+  clearIdleReset();
+  if(streamRef){
+    streamRef.getTracks().forEach(track => track.stop());
+    streamRef = null;
+  }
+  video.srcObject = null;
+  shots = [];
+  activeFrame = null;
+  resultsScreen.classList.add('hide');
+  boothScreen.classList.add('hide');
+  framePicker.classList.add('hide');
+  landing.classList.remove('hide');
 }
 
 function countdown(n){
@@ -533,15 +560,35 @@ async function buildStrip(){
   stripActions.style.display = 'flex';
 }
 
-downloadBtn.addEventListener('click', () => {
-  const link = document.createElement('a');
-  const stamp = new Date().toISOString().slice(0,10);
-  link.download = `snapshot-strip-${stamp}.png`;
-  link.href = stripCanvas.toDataURL('image/png');
-  link.click();
+printBtn.addEventListener('click', () => {
+  scheduleIdleReset();
+  const dataUrl = stripCanvas.toDataURL('image/png');
+  const printWindow = window.open('', '_blank');
+  if(!printWindow){
+    alert("Your browser blocked the print window. Please allow pop-ups for this site and try again.");
+    return;
+  }
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Print Your Strip</title>
+        <style>
+          @page { margin: 0; }
+          html, body { margin:0; padding:0; }
+          body{ display:flex; align-items:center; justify-content:center; min-height:100vh; }
+          img{ max-width:100%; height:auto; }
+        </style>
+      </head>
+      <body>
+        <img src="${dataUrl}" onload="window.focus(); window.print();">
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
 });
 
 newStripBtn.addEventListener('click', () => {
+  clearIdleReset();
   resultsScreen.classList.add('hide');
   boothScreen.classList.remove('hide');
   runSession();

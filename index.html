@@ -796,15 +796,6 @@ async function buildStrip(){
 printBtn.addEventListener('click', async () => {
   scheduleIdleReset();
 
-  if(printerDevice){
-    try{
-      await printViaUSB(stripCanvas);
-      return;
-    }catch(err){
-      console.warn('USB print failed, falling back to browser print dialog', err);
-    }
-  }
-
   const dataUrl = stripCanvas.toDataURL('image/png');
   const printWindow = window.open('', '_blank');
   if(!printWindow){
@@ -816,7 +807,7 @@ printBtn.addEventListener('click', async () => {
       <head>
         <title>Print Your Strip</title>
         <style>
-          @page { size: auto; margin: 0.25in; }
+          @page { size: 4in 6in; margin: 0.1in; }
           html, body { margin:0; padding:0; width:100%; height:100%; }
           body{
             display:flex; align-items:center; justify-content:center;

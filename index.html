@@ -309,7 +309,7 @@ let streamRef = null;
 //   576 = common 80mm thermal printers (203dpi)   <- default
 // Check your printer's manual/spec sheet and adjust if prints come out
 // cropped or with a blank margin on one side.
-const PRINTER_WIDTH_PX = 1536;
+const PRINTER_WIDTH_PX = 2048;
 
 // How many blank lines to feed after each print before cutting. Too low
 // and there's not enough clearance past the tear bar to tear cleanly by
@@ -510,10 +510,15 @@ async function printViaUSB(canvas){
     await sleep(PRINTER_BAND_DELAY_MS);
   }
 
-  // Feed enough blank paper to clear the tear bar, then full cut. Printers
-  // without an auto-cutter typically just ignore the cut bytes harmlessly —
-  // remove the GS V part below if your printer errors on it.
-  await sendToPrinter(device, endpointOut, new Uint8Array([0x1B, 0x64, PRINTER_FEED_LINES, 0x1D, 0x56, 0x42, 0x00]));
+  // Feed using plain newline bytes — nearly every ESC/POS printer handles
+  // these reliably, more so than the ESC d "feed n lines" command, which
+  // some budget clone firmwares parse inconsistently (this is likely what
+  // caused feeding to stop working entirely). Then a basic full cut.
+  // Printers without an auto-cutter typically just ignore the cut bytes
+  // harmlessly — remove that line below if your printer errors on it.
+  const feedBytes = new Uint8Array(PRINTER_FEED_LINES).fill(0x0A);
+  await sendToPrinter(device, endpointOut, feedBytes);
+  await sendToPrinter(device, endpointOut, new Uint8Array([0x1D, 0x56, 0x00])); // GS V 0 (full cut)
 }
 // ------------------------------------------------------------------------
 

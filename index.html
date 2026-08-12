@@ -232,6 +232,7 @@
     <p class="landing-sub">Step up, strike a pose, take one home.</p>
     <button class="tap-begin" id="tapBeginBtn">Tap to Begin</button>
     <button class="connect-printer-link" id="connectPrinterBtn">Connect Printer</button>
+    <button class="connect-printer-link" id="testWidthBtn">Test Print Width</button>
   </div>
 </div>
 
@@ -289,6 +290,7 @@ const frameGrid = document.getElementById('frameGrid');
 const boothScreen = document.getElementById('boothScreen');
 const resultsScreen = document.getElementById('resultsScreen');
 const connectPrinterBtn = document.getElementById('connectPrinterBtn');
+const testWidthBtn = document.getElementById('testWidthBtn');
 
 tapBeginBtn.addEventListener('click', () => {
   landing.classList.add('hide');
@@ -410,41 +412,6 @@ function ditherToBitmap(imageData, width, height){
   return { packed, bytesPerRow };
 }
 
-// Builds a full ESC/POS job: init, raster image (GS v 0), feed + cut.
-function canvasToESCPOS(sourceCanvas, targetWidthPx){
-  const width = targetWidthPx - (targetWidthPx % 8); // must be a multiple of 8
-  const scale = width / sourceCanvas.width;
-  const height = Math.round(sourceCanvas.height * scale);
-
-  const off = document.createElement('canvas');
-  off.width = width;
-  off.height = height;
-  const octx = off.getContext('2d');
-  octx.fillStyle = '#fff';
-  octx.fillRect(0, 0, width, height);
-  octx.drawImage(sourceCanvas, 0, 0, width, height);
-  const imageData = octx.getImageData(0, 0, width, height);
-
-  const { packed, bytesPerRow } = ditherToBitmap(imageData, width, height);
-
-  const xL = bytesPerRow & 0xFF, xH = (bytesPerRow >> 8) & 0xFF;
-  const yL = height & 0xFF, yH = (height >> 8) & 0xFF;
-
-  const init = new Uint8Array([0x1B, 0x40]);                          // ESC @  (initialize)
-  const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH]); // GS v 0 (raster image)
-  // Feed a few lines then full cut. Printers without an auto-cutter
-  // typically just ignore the cut bytes harmlessly — remove the GS V part
-  // below if your printer errors on it.
-  const feedCut = new Uint8Array([0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00]);
-
-  const total = new Uint8Array(init.length + header.length + packed.length + feedCut.length);
-  total.set(init, 0);
-  total.set(header, init.length);
-  total.set(packed, init.length + header.length);
-  total.set(feedCut, init.length + header.length + packed.length);
-  return total;
-}
-
 async function sendToPrinter(device, endpointOut, data){
   const chunkSize = 4096;
   for(let offset = 0; offset < data.length; offset += chunkSize){
@@ -452,10 +419,95 @@ async function sendToPrinter(device, endpointOut, data){
   }
 }
 
+// Sends the image as several short raster commands (bands) instead of one
+// giant one. Many budget ESC/POS printers have a small internal print
+// buffer and silently drop data (or just stop) if a single raster command
+// is too tall — this keeps each command small enough to be safe, and
+// paces them with a short delay so the printer's buffer has time to drain.
+const PRINTER_BAND_ROWS = 200;
+const PRINTER_BAND_DELAY_MS = 40;
+
+// Prints a calibration pattern: solid bars spanning the full configured
+// width, small square markers at the very left and right edges, and a
+// ruler of stripes in between. If the bars/markers print with blank paper
+// left over on one or both sides, PRINTER_WIDTH_PX is too small — raise it.
+// If either edge marker is missing or the bars look clipped, it's too
+// large — lower it. Re-run after each change until both edge squares and
+// the full-width bars print cleanly with no leftover blank margin.
+async function printTestPattern(){
+  if(!printerDevice){
+    alert('Connect a printer first.');
+    return;
+  }
+  const width = PRINTER_WIDTH_PX;
+  const height = 260;
+  const testCanvas = document.createElement('canvas');
+  testCanvas.width = width;
+  testCanvas.height = height;
+  const ctx = testCanvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, width, 50); // top full-width bar
+
+  const stripeWidth = 40;
+  for(let x = 0; x < width; x += stripeWidth * 2){
+    ctx.fillRect(x, 60, stripeWidth, 100); // ruler stripes
+  }
+
+  ctx.fillRect(0, 170, width, 50); // bottom full-width bar
+  ctx.fillRect(0, 230, 20, 20); // left edge marker
+  ctx.fillRect(width - 20, 230, 20, 20); // right edge marker
+
+  try{
+    await printViaUSB(testCanvas);
+  }catch(err){
+    alert('Test print failed: ' + err.message);
+  }
+}
+
+if(testWidthBtn) testWidthBtn.addEventListener('click', printTestPattern);
+
 async function printViaUSB(canvas){
   if(!printerDevice) throw new Error('No USB printer connected.');
-  const data = canvasToESCPOS(canvas, PRINTER_WIDTH_PX);
-  await sendToPrinter(printerDevice.device, printerDevice.endpointOut, data);
+
+  const width = PRINTER_WIDTH_PX - (PRINTER_WIDTH_PX % 8); // must be a multiple of 8
+  const scale = width / canvas.width;
+  const fullHeight = Math.round(canvas.height * scale);
+
+  const off = document.createElement('canvas');
+  off.width = width;
+  off.height = fullHeight;
+  const octx = off.getContext('2d');
+  octx.fillStyle = '#fff';
+  octx.fillRect(0, 0, width, fullHeight);
+  octx.drawImage(canvas, 0, 0, width, fullHeight);
+  const imageData = octx.getImageData(0, 0, width, fullHeight);
+
+  // Dither once across the full image (not per-band) so there's no visible
+  // seam where bands meet.
+  const { packed, bytesPerRow } = ditherToBitmap(imageData, width, fullHeight);
+
+  const { device, endpointOut } = printerDevice;
+  await sendToPrinter(device, endpointOut, new Uint8Array([0x1B, 0x40])); // ESC @ (initialize)
+
+  for(let y = 0; y < fullHeight; y += PRINTER_BAND_ROWS){
+    const rows = Math.min(PRINTER_BAND_ROWS, fullHeight - y);
+    const bandBytes = packed.subarray(y * bytesPerRow, (y + rows) * bytesPerRow);
+    const xL = bytesPerRow & 0xFF, xH = (bytesPerRow >> 8) & 0xFF;
+    const yL = rows & 0xFF, yH = (rows >> 8) & 0xFF;
+    const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH]); // GS v 0 (raster image)
+    const band = new Uint8Array(header.length + bandBytes.length);
+    band.set(header, 0);
+    band.set(bandBytes, header.length);
+    await sendToPrinter(device, endpointOut, band);
+    await sleep(PRINTER_BAND_DELAY_MS);
+  }
+
+  // Feed a few lines then full cut. Printers without an auto-cutter
+  // typically just ignore the cut bytes harmlessly — remove the GS V part
+  // below if your printer errors on it.
+  await sendToPrinter(device, endpointOut, new Uint8Array([0x1B, 0x64, 0x03, 0x1D, 0x56, 0x42, 0x00]));
 }
 // ------------------------------------------------------------------------
 

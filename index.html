@@ -309,7 +309,11 @@ let streamRef = null;
 //   576 = common 80mm thermal printers (203dpi)   <- default
 // Check your printer's manual/spec sheet and adjust if prints come out
 // cropped or with a blank margin on one side.
-const PRINTER_WIDTH_PX = 1728;
+// Logia LOGLP300: rated 300dpi, 4in wide labels -> 300*4 = 1200 dots.
+// This should be very close to correct already since it's from the actual
+// printer spec rather than trial and error — fine-tune with Test Print
+// Width if there's still a small margin or clipping.
+const PRINTER_WIDTH_PX = 1200;
 
 // How many blank lines to feed after each print before cutting. Too low
 // and there's not enough clearance past the tear bar to tear cleanly by
@@ -795,6 +799,15 @@ async function buildStrip(){
 
 printBtn.addEventListener('click', async () => {
   scheduleIdleReset();
+
+  if(printerDevice){
+    try{
+      await printViaUSB(stripCanvas);
+      return;
+    }catch(err){
+      console.warn('USB print failed, falling back to browser print dialog', err);
+    }
+  }
 
   const dataUrl = stripCanvas.toDataURL('image/png');
   const printWindow = window.open('', '_blank');

@@ -28,7 +28,7 @@
       radial-gradient(120% 90% at 50% -10%, #FFFDF9 0%, var(--bg) 55%);
     color:var(--ink);
     font-family:'Space Mono', monospace;
-    min-height:100vh;
+    min-height:100dvh;
     display:flex;
     justify-content:center;
     padding: 28px 16px 60px;
@@ -60,7 +60,7 @@
   #boothScreen{ padding:0; background:#0a0908; }
   .viewfinder{
     position:relative;
-    width:100vw; height:100dvh;
+    width:100%; height:100%;
     overflow:hidden;
     background:#0a0908;
   }
@@ -91,7 +91,8 @@
   .countdown.show{opacity:1;}
 
   .frame-dots{
-    position:absolute; left:50%; bottom:32px; transform:translateX(-50%);
+    position:absolute; left:50%; transform:translateX(-50%);
+    bottom: calc(32px + env(safe-area-inset-bottom, 0px));
     display:flex; justify-content:center; gap:8px;
     background: rgba(10,9,8,0.4);
     padding: 9px 14px;
@@ -132,12 +133,21 @@
 
   canvas#hiddenCanvas{ display:none; }
 
-  /* Full-screen overlay steps (landing, frame picker) */
+  /* Full-screen overlay steps (landing, frame picker). Height is set
+     explicitly with dvh (not inset:0's implied 100%) so it tracks the
+     browser's *visible* area as toolbars/nav bars show and hide — inset:0
+     on a fixed element anchors to the full layout viewport instead, which
+     is what let buttons end up hidden underneath a device's browser or
+     gesture bar. overflow-y:auto is a safety net so content and buttons
+     stay reachable (via scroll) even in the tightest viewport case. */
   .screen{
-    position:fixed; inset:0; z-index:50;
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    height:100dvh;
     display:flex; align-items:center; justify-content:center;
     background: radial-gradient(120% 90% at 50% -10%, #FFFDF9 0%, var(--bg) 55%);
-    padding: 24px;
+    padding: 24px 24px calc(24px + env(safe-area-inset-bottom, 0px));
+    overflow-y:auto;
+    -webkit-overflow-scrolling: touch;
     transition: opacity .5s ease, visibility 0s linear 0s;
   }
   .screen.hide{

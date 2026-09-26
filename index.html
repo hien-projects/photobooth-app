@@ -613,11 +613,52 @@ async function buildStrip(){
   stripActions.style.display = 'flex';
 }
 
-// Prints through the system print dialog (on Android: Canon Print Service
-// or Mopria over WiFi). The page's print CSS sends only #printArea, sized to
-// a borderless 4x6 sheet, so the 1200x1800 strip maps 1:1 onto the paper.
+// ---- Print bleed -----------------------------------------------------------
+// Borderless printing enlarges the image slightly so it runs off every edge of
+// the paper, which trims a few mm from each side. To keep the actual design
+// intact, the print copy shrinks the strip a little and fills the extra margin
+// by stretching the frame's own outermost pixels outward (red border, stripes),
+// so only that filler gets trimmed. Raise PRINT_BLEED_IN if edges are still
+// cut off; lower it (or set 0) if you see the stretched filler on the print.
+const PRINT_BLEED_IN = 0.12;   // inches of filler on each side (~3mm)
+const PRINT_DPI = 300;         // strip is 1200x1800 = 4x6in at 300dpi
+
+function makePrintCanvas(src){
+  const W = src.width, H = src.height;
+  const bleed = Math.round(PRINT_BLEED_IN * PRINT_DPI);
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ctx = out.getContext('2d');
+  if(bleed <= 0){ ctx.drawImage(src, 0, 0); return out; }
+
+  // Uniform scale so nothing is distorted; the tighter axis sets the scale.
+  const scale = Math.min((W - 2*bleed) / W, (H - 2*bleed) / H);
+  const iw = Math.round(W * scale), ih = Math.round(H * scale);
+  const ix = Math.round((W - iw) / 2), iy = Math.round((H - ih) / 2);
+  const e = 2; // source edge thickness (px) used for stretching
+  const k = 6; // sample edges a few px in; the artwork's outermost px are fringed
+
+  // Edges: stretch near-edge rows/columns into the margins.
+  ctx.drawImage(src, k, 0, e, H,          0, iy, ix, ih);                 // left
+  ctx.drawImage(src, W - k - e, 0, e, H,  ix + iw, iy, W - ix - iw, ih);  // right
+  ctx.drawImage(src, 0, k, W, e,          ix, 0, iw, iy);                 // top
+  ctx.drawImage(src, 0, H - k - e, W, e,  ix, iy + ih, iw, H - iy - ih);  // bottom
+  // Corners.
+  ctx.drawImage(src, k, k, e, e,                  0, 0, ix, iy);
+  ctx.drawImage(src, W - k - e, k, e, e,          ix + iw, 0, W - ix - iw, iy);
+  ctx.drawImage(src, k, H - k - e, e, e,          0, iy + ih, ix, H - iy - ih);
+  ctx.drawImage(src, W - k - e, H - k - e, e, e,  ix + iw, iy + ih, W - ix - iw, H - iy - ih);
+  // The design itself, slightly reduced, centered.
+  ctx.drawImage(src, 0, 0, W, H, ix, iy, iw, ih);
+  return out;
+}
+
+// Prints through the system print dialog (Canon driver on Windows, or Canon
+// Print Service / Mopria on Android). The page's print CSS sends only
+// #printArea, sized to a borderless 4x6 sheet. Email still sends the
+// original strip without the bleed.
 printBtn.addEventListener('click', async () => {
-  printImg.src = stripCanvas.toDataURL('image/jpeg', 0.95);
+  printImg.src = makePrintCanvas(stripCanvas).toDataURL('image/jpeg', 0.95);
   try{ await printImg.decode(); }catch(err){}
   window.print();
 });

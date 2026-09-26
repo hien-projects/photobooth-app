@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Snapshot">
@@ -188,6 +188,38 @@
     .tap-begin{ animation: none; }
   }
   /* Printing: only the finished strip goes to the printer, borderless 4x6. */
+  /* Email panel */
+  .email-panel{
+    position:fixed; top:0; left:0; right:0; height:100dvh; z-index:60;
+    display:flex; align-items:flex-start; justify-content:center;
+    padding: max(48px, 12dvh) 20px 24px;
+    background: rgba(91,74,63,0.35);
+    overflow-y:auto;
+  }
+  .email-panel.hide{ display:none; }
+  .email-card{
+    width:100%; max-width:380px;
+    background: var(--bg); border:1px solid var(--line); border-radius:18px;
+    padding:22px 20px 18px; text-align:center;
+    box-shadow: 0 24px 50px -20px rgba(91,74,63,.45);
+  }
+  .email-card h2{
+    font-family:'Bebas Neue', sans-serif; font-weight:400; font-size:34px;
+    letter-spacing:.03em; margin:0 0 4px; color:var(--ink);
+  }
+  .email-card p{ font-size:12px; color:var(--ink-soft); margin:0 0 16px; line-height:1.6; }
+  .email-input{
+    width:100%; font-family:'Space Mono', monospace; font-size:16px;
+    padding:14px; border-radius:10px; border:1px solid var(--line);
+    background:#fff; color:var(--ink); outline:none;
+  }
+  .email-input:focus{ border-color: var(--blush-deep); }
+  .email-status{ min-height:20px; font-size:12px; margin:10px 0 4px; color:var(--ink-soft); }
+  .email-status.error{ color:#B3452C; }
+  .email-status.ok{ color:#4E7A4A; }
+  .email-card .strip-actions{ margin-top:8px; }
+  .btn:disabled{ opacity:.55; cursor:default; }
+
   #printArea{ display:none; }
   @page{ size: 4in 6in; margin: 0; }
   @media print{
@@ -274,11 +306,26 @@
     <canvas id="stripCanvas" style="display:none;"></canvas>
     <div class="strip-actions" id="stripActions" style="display:none;">
       <button class="btn btn-primary" id="printBtn">Print Picture</button>
+      <button class="btn btn-secondary" id="emailBtn">Email Picture</button>
       <button class="btn btn-secondary" id="newStripBtn">Retake Picture</button>
     </div>
   </div>
 </div>
 
+<div class="email-panel hide" id="emailPanel">
+  <form class="email-card" id="emailForm" novalidate>
+    <h2>Email Your Picture</h2>
+    <p>Type your email address and we'll send you a copy.</p>
+    <input class="email-input" id="emailInput" type="email" inputmode="email"
+      placeholder="you@example.com" autocomplete="off" autocorrect="off"
+      autocapitalize="off" spellcheck="false">
+    <div class="email-status" id="emailStatus"></div>
+    <div class="strip-actions">
+      <button class="btn btn-primary" id="emailSendBtn" type="submit">Send</button>
+      <button class="btn btn-secondary" id="emailCancelBtn" type="button">Cancel</button>
+    </div>
+  </form>
+</div>
 <canvas id="hiddenCanvas"></canvas>
 <div id="printArea"><img id="printImg" alt=""></div>
 
@@ -302,6 +349,20 @@ const frameGrid = document.getElementById('frameGrid');
 const boothScreen = document.getElementById('boothScreen');
 const resultsScreen = document.getElementById('resultsScreen');
 const printImg = document.getElementById('printImg');
+const emailBtn = document.getElementById('emailBtn');
+const emailPanel = document.getElementById('emailPanel');
+const emailForm = document.getElementById('emailForm');
+const emailInput = document.getElementById('emailInput');
+const emailStatus = document.getElementById('emailStatus');
+const emailSendBtn = document.getElementById('emailSendBtn');
+const emailCancelBtn = document.getElementById('emailCancelBtn');
+
+// ---- Email setup ----------------------------------------------------------
+// Paste the Web app URL from your Google Apps Script deployment here, and
+// use the same secret you set in the script (see booth-mailer.gs).
+const EMAIL_SCRIPT_URL = '';
+const EMAIL_SECRET = 'change-me';
+// ---------------------------------------------------------------------------
 
 tapBeginBtn.addEventListener('click', () => {
   landing.classList.add('hide');
@@ -446,6 +507,7 @@ function resetToLanding(){
   video.srcObject = null;
   shots = [];
   activeFrame = null;
+  closeEmailPanel();
   resultsScreen.classList.add('hide');
   boothScreen.classList.add('hide');
   framePicker.classList.add('hide');
@@ -565,6 +627,76 @@ printBtn.addEventListener('click', async () => {
 window.addEventListener('beforeprint', () => clearIdleReset());
 window.addEventListener('afterprint', () => {
   if(!resultsScreen.classList.contains('hide')) scheduleIdleReset();
+});
+
+// ---- Email ---------------------------------------------------------------
+function setEmailStatus(msg, kind){
+  emailStatus.textContent = msg || '';
+  emailStatus.className = 'email-status' + (kind ? ' ' + kind : '');
+}
+
+function openEmailPanel(){
+  clearIdleReset(); // typing takes a while; don't reset mid-entry
+  emailInput.value = '';
+  setEmailStatus('');
+  emailSendBtn.disabled = false;
+  emailCancelBtn.disabled = false;
+  emailPanel.classList.remove('hide');
+  setTimeout(() => emailInput.focus(), 50);
+}
+
+function closeEmailPanel(){
+  emailPanel.classList.add('hide');
+  emailInput.value = ''; // never leave a guest's address on screen
+  emailInput.blur();
+  setEmailStatus('');
+}
+
+emailBtn.addEventListener('click', openEmailPanel);
+
+emailInput.addEventListener('input', () => {
+  if(emailStatus.classList.contains('error')) setEmailStatus('');
+});
+
+emailCancelBtn.addEventListener('click', () => {
+  closeEmailPanel();
+  scheduleIdleReset();
+});
+
+emailForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const to = emailInput.value.trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){
+    setEmailStatus("That email address doesn't look right.", 'error');
+    return;
+  }
+  if(!EMAIL_SCRIPT_URL){
+    setEmailStatus("Email isn't set up on this booth yet.", 'error');
+    return;
+  }
+
+  emailSendBtn.disabled = true;
+  emailCancelBtn.disabled = true;
+  setEmailStatus('Sending\u2026');
+
+  try{
+    const image = stripCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+    // text/plain body keeps this a "simple" request, which Apps Script accepts
+    // cross-origin without a CORS preflight.
+    const res = await fetch(EMAIL_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secret: EMAIL_SECRET, to, image })
+    });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'send_failed');
+    setEmailStatus('Sent! Check your inbox.', 'ok');
+    setTimeout(() => { closeEmailPanel(); scheduleIdleReset(); }, 1800);
+  }catch(err){
+    console.warn('Email failed', err);
+    setEmailStatus("Couldn't send right now. Please try again.", 'error');
+    emailSendBtn.disabled = false;
+    emailCancelBtn.disabled = false;
+  }
 });
 
 newStripBtn.addEventListener('click', () => {

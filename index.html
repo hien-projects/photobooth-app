@@ -507,6 +507,7 @@ function resetToLanding(){
   video.srcObject = null;
   shots = [];
   activeFrame = null;
+  printFile = null;
   closeEmailPanel();
   resultsScreen.classList.add('hide');
   boothScreen.classList.add('hide');
@@ -611,6 +612,7 @@ async function buildStrip(){
   stripEmpty.style.display = 'none';
   stripCanvas.style.display = 'block';
   stripActions.style.display = 'flex';
+  await preparePrintCopy();
 }
 
 // ---- Print bleed -----------------------------------------------------------
@@ -653,13 +655,45 @@ function makePrintCanvas(src){
   return out;
 }
 
-// Prints through the system print dialog (Canon driver on Windows, or Canon
-// Print Service / Mopria on Android). The page's print CSS sends only
-// #printArea, sized to a borderless 4x6 sheet. Email still sends the
-// original strip without the bleed.
-printBtn.addEventListener('click', async () => {
-  printImg.src = makePrintCanvas(stripCanvas).toDataURL('image/jpeg', 0.95);
+// iPhone/iPad (iPadOS reports itself as a Mac, so also check for touch).
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// The print copy (strip + bleed) is built as soon as the strip is ready, so
+// the Print tap can hand it off immediately. iOS only opens the share sheet
+// directly inside a tap, so no slow work can happen between the two.
+let printFile = null;
+async function preparePrintCopy(){
+  const c = makePrintCanvas(stripCanvas);
+  printImg.src = c.toDataURL('image/jpeg', 0.95);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
+  printFile = blob ? new File([blob], 'photo-strip.jpg', { type: 'image/jpeg' }) : null;
   try{ await printImg.decode(); }catch(err){}
+}
+
+// Printing:
+//  - iOS: AirPrint forces margins on anything printed as a *web page*, but
+//    prints *photos* borderless. So on iOS the strip goes to the share sheet
+//    as an image; tapping Print there uses the photo path.
+//  - Windows / Android: the system print dialog. The page's print CSS sends
+//    only #printArea, sized to a borderless 4x6 sheet.
+// Email still sends the original strip without the bleed.
+printBtn.addEventListener('click', async () => {
+  if(IS_IOS && printFile && navigator.canShare && navigator.canShare({ files: [printFile] })){
+    clearIdleReset();
+    try{
+      await navigator.share({ files: [printFile] });
+    }catch(err){
+      // AbortError = guest closed the sheet; anything else, fall back below.
+      if(err.name !== 'AbortError'){ window.print(); }
+    }
+    if(!resultsScreen.classList.contains('hide')) scheduleIdleReset();
+    return;
+  }
+  if(!printImg.complete || !printImg.src){
+    printImg.src = makePrintCanvas(stripCanvas).toDataURL('image/jpeg', 0.95);
+    try{ await printImg.decode(); }catch(err){}
+  }
   window.print();
 });
 

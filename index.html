@@ -308,6 +308,7 @@
       <button class="btn btn-primary" id="printBtn">Print Picture</button>
       <button class="btn btn-secondary" id="emailBtn">Email Picture</button>
       <button class="btn btn-secondary" id="newStripBtn">Retake Picture</button>
+      <button class="btn btn-secondary" id="homeBtn">Home</button>
     </div>
   </div>
 </div>
@@ -360,8 +361,8 @@ const emailCancelBtn = document.getElementById('emailCancelBtn');
 // ---- Email setup ----------------------------------------------------------
 // Paste the Web app URL from your Google Apps Script deployment here, and
 // use the same secret you set in the script (see booth-mailer.gs).
-const EMAIL_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxCZST2x3bCuRHEE-gufDV9GkFYn2HMyHTz_Xo3XLw3_Q6RnUlTFCxgs55n6-nXlYDy/exec';
-const EMAIL_SECRET = 'carnival-ticket-2677';
+const EMAIL_SCRIPT_URL = '';
+const EMAIL_SECRET = 'change-me';
 // ---------------------------------------------------------------------------
 
 tapBeginBtn.addEventListener('click', () => {
@@ -476,7 +477,7 @@ async function runSession(){
   stripActions.style.display = 'none';
 
   for(let i=0; i<count; i++){
-    await countdown(3);
+    await countdown(COUNTDOWN_SECONDS);
     capture();
     dots[i].classList.add('filled');
     await sleep(500);
@@ -515,6 +516,9 @@ function resetToLanding(){
   landing.classList.remove('hide');
 }
 
+// Seconds of countdown before each photo (shown as a big number, 1s per tick).
+const COUNTDOWN_SECONDS = 7;
+
 function countdown(n){
   return new Promise(resolve => {
     let count = n;
@@ -529,7 +533,7 @@ function countdown(n){
       } else {
         countdownEl.textContent = count;
       }
-    }, 700);
+    }, 1000);
   });
 }
 
@@ -664,6 +668,7 @@ const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 // directly inside a tap, so no slow work can happen between the two.
 let printFile = null;
 async function preparePrintCopy(){
+
   const c = makePrintCanvas(stripCanvas);
   printImg.src = c.toDataURL('image/jpeg', 0.95);
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
@@ -773,6 +778,9 @@ emailForm.addEventListener('submit', async (e) => {
     emailCancelBtn.disabled = false;
   }
 });
+
+// Back to the Welcome screen for the next guest (also releases the camera).
+document.getElementById('homeBtn').addEventListener('click', resetToLanding);
 
 newStripBtn.addEventListener('click', () => {
   clearIdleReset();

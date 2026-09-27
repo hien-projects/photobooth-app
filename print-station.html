@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print Station</title>
+<style>
+  :root{
+    --bg:#1F1B18; --panel:#2A2521; --ink:#F3E9DE; --soft:#B6A594;
+    --ok:#8FC27E; --warn:#E8B45A; --bad:#E07A6A; --line:rgba(243,233,222,.12);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; padding:28px 16px}
+  main{max-width:640px; margin:0 auto}
+  h1{font-size:22px; margin:0 0 4px; letter-spacing:.01em}
+  .sub{color:var(--soft); margin:0 0 20px; font-size:13px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin-bottom:14px}
+  .status{display:flex; align-items:center; gap:10px; font-size:17px; font-weight:600}
+  .dot{width:12px; height:12px; border-radius:50%; background:var(--soft); flex:none}
+  .dot.ok{background:var(--ok); box-shadow:0 0 0 4px rgba(143,194,126,.18)}
+  .dot.warn{background:var(--warn)}
+  .dot.bad{background:var(--bad)}
+  .detail{color:var(--soft); font-size:13px; margin-top:4px}
+  .counts{display:flex; gap:24px; margin-top:12px; font-size:13px; color:var(--soft)}
+  .counts b{color:var(--ink); font-size:20px; display:block}
+  #log{list-style:none; margin:0; padding:0; font-size:13px; max-height:40vh; overflow:auto}
+  #log li{padding:6px 0; border-bottom:1px solid var(--line); color:var(--soft)}
+  #log li b{color:var(--ink); font-weight:600}
+  #log li.err b{color:var(--bad)}
+  button{font:inherit; font-size:13px; background:transparent; color:var(--ink);
+    border:1px solid var(--line); border-radius:9px; padding:8px 14px; cursor:pointer}
+  button:hover{border-color:var(--soft)}
+  .row{display:flex; justify-content:space-between; align-items:center; gap:12px}
+
+  /* Printing: only the strip, borderless 4x6. */
+  #printArea{display:none}
+  @page{ size: 4in 6in; margin: 0; }
+  @media print{
+    html, body{margin:0 !important; padding:0 !important; background:#fff !important}
+    body > *:not(#printArea){display:none !important}
+    #printArea{display:block !important; width:4in; height:6in; overflow:hidden}
+    #printImg{display:block; width:4in; height:6in; object-fit:contain}
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo Booth Print Station</h1>
+  <p class="sub">Keep this window open and visible on the laptop. New booth prints come out automatically.</p>
+
+  <div class="card">
+    <div class="status"><span class="dot" id="dot"></span><span id="status">Starting&hellip;</span></div>
+    <div class="detail" id="detail"></div>
+    <div class="counts">
+      <div><b id="nPrinted">0</b>printed this session</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <strong>Activity</strong>
+      <button id="testBtn" type="button">Print test page</button>
+    </div>
+    <ul id="log"></ul>
+  </div>
+</main>
+
+<div id="printArea"><img id="printImg" alt=""></div>
+
+<script>
+// ---- Settings ---------------------------------------------------------------
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsEpwTCHQfQk3sjAGWKh2L5LIkPDuuauvyyaq32UT7TnYYcNWUj06Tq-SbFMpqd6Y3/exec';          // same /exec URL as EMAIL_SCRIPT_URL in the booth
+const SECRET     = 'carnival-ticket-2677'; // same phrase as EMAIL_SECRET in the booth
+const POLL_MS    = 3000;        // how often to check for new prints
+// -----------------------------------------------------------------------------
+
+const $ = id => document.getElementById(id);
+const printImg = $('printImg');
+let printedCount = 0;
+
+// Remember printed job IDs so a reload can't print the same strip twice.
+const printed = new Set((() => {
+  try{ return JSON.parse(localStorage.getItem('printedIds') || '[]'); }catch(e){ return []; }
+})());
+function remember(id){
+  printed.add(id);
+  try{ localStorage.setItem('printedIds', JSON.stringify([...printed].slice(-500))); }catch(e){}
+}
+
+function setStatus(text, kind, detail){
+  $('status').textContent = text;
+  $('dot').className = 'dot' + (kind ? ' ' + kind : '');
+  $('detail').textContent = detail || '';
+}
+function log(msg, isErr){
+  const li = document.createElement('li');
+  if(isErr) li.className = 'err';
+  const t = new Date().toLocaleTimeString([], { hour:'numeric', minute:'2-digit', second:'2-digit' });
+  li.innerHTML = `<b>${t}</b> &nbsp;`;
+  li.appendChild(document.createTextNode(msg));
+  $('log').prepend(li);
+  while($('log').children.length > 60) $('log').lastChild.remove();
+}
+
+async function printImage(src){
+  printImg.src = src;
+  try{ await printImg.decode(); }catch(e){}
+  window.print();   // silent with --kiosk-printing; shows a dialog otherwise
+  await new Promise(r => setTimeout(r, 1500));
+}
+
+async function markDone(id){
+  const res = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'done', secret: SECRET, id })
+  });
+  const d = await res.json();
+  if(!d.ok) throw new Error(d.error || 'done_failed');
+}
+
+let failures = 0;
+async function tick(){
+  let delay = POLL_MS;
+  try{
+    const res = await fetch(`${SCRIPT_URL}?action=next&secret=${encodeURIComponent(SECRET)}`);
+    const d = await res.json();
+    if(!d.ok) throw new Error(d.error === 'unauthorized' ? 'Secret doesn’t match the Google script' : (d.error || 'script error'));
+    if(failures) log('Connection restored.');
+    failures = 0;
+
+    if(d.job){
+      if(!printed.has(d.job.id)){
+        setStatus('Printing…', 'ok', d.job.name);
+        await printImage('data:image/jpeg;base64,' + d.job.image);
+        remember(d.job.id);
+        printedCount++; $('nPrinted').textContent = printedCount;
+        log('Printed ' + d.job.name);
+      }
+      try{ await markDone(d.job.id); }
+      catch(e){ log('Printed, but couldn’t mark done yet (will retry): ' + e.message, true); }
+      delay = 500; // more may be waiting
+    }else{
+      setStatus('Waiting for prints', 'ok', 'Checking every ' + POLL_MS/1000 + ' seconds');
+    }
+  }catch(e){
+    failures++;
+    const msg = e instanceof TypeError ? 'Can’t reach the Google script (internet or URL)' : e.message;
+    setStatus('Problem – retrying', 'bad', msg);
+    if(failures <= 3 || failures % 20 === 0) log(msg, true);
+    delay = Math.min(POLL_MS * 2, 15000);
+  }
+  setTimeout(tick, delay);
+}
+
+// Test page: 4x6 with a thin border, corner marks and a center cut line, to
+// check paper size, borderless and alignment without using the booth.
+$('testBtn').addEventListener('click', () => {
+  const c = document.createElement('canvas'); c.width = 1200; c.height = 1800;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, 1200, 1800);
+  x.fillStyle = '#C3352A';
+  for(let i = 0; i < 1200; i += 80) x.fillRect(i, 0, 40, 1800);
+  x.fillStyle = '#fff'; x.fillRect(90, 90, 1020, 1620);
+  x.strokeStyle = '#000'; x.lineWidth = 6; x.strokeRect(90, 90, 1020, 1620);
+  x.setLineDash([18, 14]); x.beginPath(); x.moveTo(600, 90); x.lineTo(600, 1710); x.stroke();
+  x.setLineDash([]); x.fillStyle = '#000'; x.textAlign = 'center';
+  x.font = 'bold 84px sans-serif'; x.fillText('PRINT STATION', 600, 820);
+  x.fillText('TEST', 600, 930);
+  x.font = '40px sans-serif';
+  x.fillText('Stripes should reach every edge,', 600, 1080);
+  x.fillText('with no white border.', 600, 1135);
+  printImage(c.toDataURL('image/jpeg', 0.95));
+  log('Sent test page');
+});
+
+// Keep the laptop screen awake while this page is open.
+async function keepAwake(){
+  try{ if('wakeLock' in navigator && document.visibilityState === 'visible') await navigator.wakeLock.request('screen'); }catch(e){}
+}
+document.addEventListener('visibilitychange', keepAwake);
+
+// Start
+(function start(){
+  if(!SCRIPT_URL){
+    setStatus('Not set up', 'bad', 'Put your /exec URL in SCRIPT_URL at the top of print-station.html');
+    return;
+  }
+  keepAwake();
+  setStatus('Connecting…', 'warn');
+  tick();
+})();
+</script>
+</body>
+</html>

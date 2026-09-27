@@ -358,11 +358,17 @@ const emailStatus = document.getElementById('emailStatus');
 const emailSendBtn = document.getElementById('emailSendBtn');
 const emailCancelBtn = document.getElementById('emailCancelBtn');
 
-// ---- Email setup ----------------------------------------------------------
+// ---- Google script setup (email + laptop printing) --------------------------
 // Paste the Web app URL from your Google Apps Script deployment here, and
 // use the same secret you set in the script (see booth-mailer.gs).
-const EMAIL_SCRIPT_URL = '';
-const EMAIL_SECRET = 'change-me';
+const EMAIL_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzsEpwTCHQfQk3sjAGWKh2L5LIkPDuuauvyyaq32UT7TnYYcNWUj06Tq-SbFMpqd6Y3/exec';
+const EMAIL_SECRET = 'carnival-ticket-2677';
+
+// How Print Picture works:
+//  'laptop' - sends the strip to the print queue; the Windows print station
+//             (print-station.ps1) prints it automatically, no dialog.
+//  'device' - prints from this device (share sheet on iPad, dialog elsewhere).
+const PRINT_MODE = 'laptop';
 // ---------------------------------------------------------------------------
 
 tapBeginBtn.addEventListener('click', () => {
@@ -509,6 +515,7 @@ function resetToLanding(){
   shots = [];
   activeFrame = null;
   printFile = null;
+  resetPrintButton();
   closeEmailPanel();
   resultsScreen.classList.add('hide');
   boothScreen.classList.add('hide');
@@ -630,9 +637,10 @@ const PRINT_BLEED_IN = 0.12;      // Windows/Android: inches of filler per side 
 const PRINT_BLEED_IOS_IN = 0.22;  // iPhone/iPad AirPrint photo path trims more (~5.5mm)
 const PRINT_DPI = 300;         // strip is 1200x1800 = 4x6in at 300dpi
 
-function makePrintCanvas(src){
+function makePrintCanvas(src, bleedIn){
   const W = src.width, H = src.height;
-  const bleed = Math.round((IS_IOS ? PRINT_BLEED_IOS_IN : PRINT_BLEED_IN) * PRINT_DPI);
+  if(bleedIn === undefined) bleedIn = IS_IOS ? PRINT_BLEED_IOS_IN : PRINT_BLEED_IN;
+  const bleed = Math.round(bleedIn * PRINT_DPI);
   const out = document.createElement('canvas');
   out.width = W; out.height = H;
   const ctx = out.getContext('2d');
@@ -669,7 +677,7 @@ const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 // directly inside a tap, so no slow work can happen between the two.
 let printFile = null;
 async function preparePrintCopy(){
-
+  resetPrintButton();
   const c = makePrintCanvas(stripCanvas);
   printImg.src = c.toDataURL('image/jpeg', 0.95);
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
@@ -684,7 +692,50 @@ async function preparePrintCopy(){
 //  - Windows / Android: the system print dialog. The page's print CSS sends
 //    only #printArea, sized to a borderless 4x6 sheet.
 // Email still sends the original strip without the bleed.
+// ---- Laptop print station ----------------------------------------------------
+// Uploads the strip to the print queue. It's printed on Windows through the
+// Canon driver, so it gets the Windows bleed. One print per strip, so repeated
+// taps can't queue extra copies; Retake/Home/new strip re-enables it.
+let printSent = false;
+
+function resetPrintButton(){
+  printSent = false;
+  printBtn.disabled = false;
+  printBtn.textContent = 'Print Picture';
+}
+
+async function sendToPrintStation(){
+  if(printSent) return;
+  if(!EMAIL_SCRIPT_URL){
+    printBtn.textContent = 'Printer not set up';
+    setTimeout(() => { if(!printSent) resetPrintButton(); }, 2500);
+    return;
+  }
+  printBtn.disabled = true;
+  printBtn.textContent = 'Sending\u2026';
+  try{
+    const image = makePrintCanvas(stripCanvas, PRINT_BLEED_IN)
+      .toDataURL('image/jpeg', 0.95).split(',')[1];
+    const res = await fetch(EMAIL_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'print', secret: EMAIL_SECRET, image })
+    });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'print_failed');
+    printSent = true;
+    printBtn.textContent = 'Sent to Printer \u2713';
+  }catch(err){
+    console.warn('Print queue failed', err);
+    printBtn.disabled = false;
+    printBtn.textContent = err.message === 'queue_full'
+      ? 'Printer busy \u2013 tap to retry'
+      : "Couldn't print \u2013 tap to retry";
+  }
+  if(!resultsScreen.classList.contains('hide')) scheduleIdleReset();
+}
+
 printBtn.addEventListener('click', async () => {
+  if(PRINT_MODE === 'laptop'){ await sendToPrintStation(); return; }
   if(IS_IOS && printFile && navigator.canShare && navigator.canShare({ files: [printFile] })){
     clearIdleReset();
     try{
@@ -785,6 +836,7 @@ document.getElementById('homeBtn').addEventListener('click', resetToLanding);
 
 newStripBtn.addEventListener('click', () => {
   clearIdleReset();
+  resetPrintButton();
   resultsScreen.classList.add('hide');
   boothScreen.classList.remove('hide');
   runSession();

@@ -626,12 +626,13 @@ async function buildStrip(){
 // by stretching the frame's own outermost pixels outward (red border, stripes),
 // so only that filler gets trimmed. Raise PRINT_BLEED_IN if edges are still
 // cut off; lower it (or set 0) if you see the stretched filler on the print.
-const PRINT_BLEED_IN = 0.12;   // inches of filler on each side (~3mm)
+const PRINT_BLEED_IN = 0.12;      // Windows/Android: inches of filler per side (~3mm)
+const PRINT_BLEED_IOS_IN = 0.22;  // iPhone/iPad AirPrint photo path trims more (~5.5mm)
 const PRINT_DPI = 300;         // strip is 1200x1800 = 4x6in at 300dpi
 
 function makePrintCanvas(src){
   const W = src.width, H = src.height;
-  const bleed = Math.round(PRINT_BLEED_IN * PRINT_DPI);
+  const bleed = Math.round((IS_IOS ? PRINT_BLEED_IOS_IN : PRINT_BLEED_IN) * PRINT_DPI);
   const out = document.createElement('canvas');
   out.width = W; out.height = H;
   const ctx = out.getContext('2d');

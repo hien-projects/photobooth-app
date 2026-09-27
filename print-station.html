@@ -88,6 +88,23 @@ function remember(id){
   try{ localStorage.setItem('printedIds', JSON.stringify([...printed].slice(-500))); }catch(e){}
 }
 
+function explainError(err){
+  err = String(err || 'script error');
+  if(err === 'unauthorized') return 'The secret doesn\u2019t match the Google script\u2019s SECRET.';
+  if(/permission|authoriz/i.test(err)) return 'Google Drive access isn\u2019t approved. In the script editor, run \u201csetup\u201d, approve the prompts, then deploy a new version. (' + err + ')';
+  return 'Google script error: ' + err;
+}
+
+// Link that opens the queue check directly, to see Google's own reply.
+function testLink(){
+  const a = document.createElement('a');
+  a.href = `${SCRIPT_URL}?action=next&secret=${encodeURIComponent(SECRET)}`;
+  a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = 'Open the test link';
+  a.style.color = 'inherit';
+  return a;
+}
+
 function setStatus(text, kind, detail){
   $('status').textContent = text;
   $('dot').className = 'dot' + (kind ? ' ' + kind : '');
@@ -125,7 +142,7 @@ async function tick(){
   try{
     const res = await fetch(`${SCRIPT_URL}?action=next&secret=${encodeURIComponent(SECRET)}`);
     const d = await res.json();
-    if(!d.ok) throw new Error(d.error === 'unauthorized' ? 'Secret doesn’t match the Google script' : (d.error || 'script error'));
+    if(!d.ok) throw new Error(explainError(d.error));
     if(failures) log('Connection restored.');
     failures = 0;
 
@@ -145,9 +162,16 @@ async function tick(){
     }
   }catch(e){
     failures++;
-    const msg = e instanceof TypeError ? 'Can’t reach the Google script (internet or URL)' : e.message;
-    setStatus('Problem – retrying', 'bad', msg);
-    if(failures <= 3 || failures % 20 === 0) log(msg, true);
+    // TypeError: blocked/unreachable. SyntaxError: Google sent a web page, not data.
+    const network = e instanceof TypeError || e instanceof SyntaxError;
+    const msg = network
+      ? 'No usable reply from the Google script. Usually the new version isn\u2019t deployed yet, or something on this computer (work network filter, ad blocker) is blocking it.'
+      : e.message;
+    setStatus('Problem \u2013 retrying', 'bad', msg);
+    if(network){
+      $('detail').append(' ', testLink(), ' to see what Google returns.');
+    }
+    if(failures <= 3 || failures % 20 === 0) log(network ? 'Can\u2019t get a reply from the Google script' : msg, true);
     delay = Math.min(POLL_MS * 2, 15000);
   }
   setTimeout(tick, delay);
